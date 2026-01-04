@@ -6,7 +6,7 @@ Este documento apresenta os diagramas de sequência para visualizar o fluxo de d
 
 ## 1. Etapa de Extração (Extract)
 
-A etapa de extração é responsável por coletar dados de fontes externas (Dynatrace, Elastic, etc.) e convertê-los em eventos raw.
+A etapa de extração é responsável por coletar dados de fontes externas (Dynatrace, Elastic, etc.) e convertê-los em eventos raw. A descoberta de serviços agora é feita via GitHub através do RepositoryCatalog.
 
 ```mermaid
 sequenceDiagram
@@ -14,11 +14,13 @@ sequenceDiagram
     participant ES as ExtractionService
     participant EO as ExtractionOrchestrator
     participant DA as DynatraceAdapter
-    participant DSD as DynatraceServiceDiscovery
+    participant RC as RepositoryCatalog
+    participant GC as GitHubClient
+    participant Cache as Caffeine Cache
+    participant GitHubAPI as GitHub API
     participant DBE as DynatraceBatchExtractor
     participant DC as DynatraceClient
-    participant Cache as Caffeine Cache
-    participant API as Dynatrace API
+    participant DynatraceAPI as Dynatrace API
 
     Scheduler->>ES: executeExtraction() (a cada 5 min)
     activate ES
@@ -30,24 +32,33 @@ sequenceDiagram
     EO->>DA: extractReactive(window)
     activate DA
     
-    DA->>DSD: discoverServices()
-    activate DSD
+    DA->>RC: discoverRepositories()
+    activate RC
     
-    DSD->>Cache: getIfPresent("all-services")
-    Cache-->>DSD: null (cache expirado)
+    RC->>Cache: getIfPresent("all-repositories")
+    Cache-->>RC: null (cache expirado)
     
-    DSD->>DC: discoverServices()
-    activate DC
-    DC->>API: GET /api/v2/entities?entitySelector=type("SERVICE")
-    API-->>DC: Lista de serviços (JSON)
-    DC-->>DSD: Mono<List<String>>
-    deactivate DC
+    RC->>GC: listAllRepositories(organization)
+    activate GC
     
-    DSD->>Cache: put("all-services", services)
-    DSD-->>DA: Mono<List<String>> (2000 serviços)
-    deactivate DSD
+    loop Paginação (100 repos por página)
+        GC->>GitHubAPI: GET /orgs/{org}/repos?per_page=100&page={page}
+        GitHubAPI-->>GC: Lista de repositórios (JSON)
+        GC-->>RC: Flux<JsonNode>
+    end
     
-    DA->>DBE: extractBatch(serviceIds, window)
+    deactivate GC
+    
+    RC->>RC: convertToMetadata(JsonNode) - parse nome, tags
+    RC->>RC: matchesFilters() - filtra por sigla, tipo, tags
+    RC->>RC: ownerInferenceEngine.inferOwner() - infere ownership
+    RC->>Cache: put("all-repositories", repositories)
+    RC-->>DA: Mono<List<RepositoryMetadata>>
+    deactivate RC
+    
+    DA->>DA: Extrai serviceIds de RepositoryMetadata
+    DA->>DA: Cria mapa serviceId -> RepositoryMetadata
+    DA->>DBE: extractBatch(serviceIds, window, repoMap)
     activate DBE
     
     DBE->>DBE: Divide em batches (50-100 serviços)
@@ -56,19 +67,19 @@ sequenceDiagram
         loop Para cada serviço no batch (paralelo)
             DBE->>DC: getServiceMetrics(serviceId, startTime, endTime)
             activate DC
-            DC->>API: GET /api/v2/timeseries/query?...
-            API-->>DC: Métricas (requestCount)
+            DC->>DynatraceAPI: GET /api/v2/timeseries/query?...
+            DynatraceAPI-->>DC: Métricas (requestCount)
             DC-->>DBE: DynatraceServiceMetrics
             deactivate DC
             
             DBE->>DC: getServiceCallers(serviceId, startTime, endTime)
             activate DC
-            DC->>API: GET /api/v2/entities/{id}/serviceFromRelationships
-            API-->>DC: Lista de callers
+            DC->>DynatraceAPI: GET /api/v2/entities/{id}/serviceFromRelationships
+            DynatraceAPI-->>DC: Lista de callers
             DC-->>DBE: List<String> callers
             deactivate DC
             
-            DBE->>DBE: createRawEvent(serviceId, metrics, callers, window)
+            DBE->>DBE: createRawEvent(serviceId, metrics, callers, window, repoMetadata)
         end
     end
     
@@ -85,16 +96,18 @@ sequenceDiagram
 ```
 
 **Notas importantes:**
-- O cache de service discovery evita consultas repetidas à API
+- A descoberta de serviços é feita via GitHub (RepositoryCatalog), não mais via Dynatrace
+- O cache de repositórios evita consultas repetidas à GitHub API (TTL configurável, padrão 240 minutos)
+- RepositoryCatalog aplica filtros (sigla, tipo, tags) e infere ownership
+- DynatraceAdapter recebe serviceIds do RepositoryCatalog e extrai métricas para esses serviços
 - Processamento paralelo com múltiplos workers (configurável)
-- Rate limiting e circuit breaker protegem contra sobrecarga da API
-- Cada adapter processa independentemente (Dynatrace, Elastic, etc.)
+- Rate limiting e circuit breaker protegem contra sobrecarga das APIs
 
 ---
 
 ## 2. Etapa de Transformação (Transform)
 
-A etapa de transformação normaliza eventos raw para o schema canônico e agrega temporalmente.
+A etapa de transformação normaliza eventos raw para o schema canônico e agrega temporalmente. Inclui informações de repositório e discovery source quando disponíveis.
 
 ```mermaid
 sequenceDiagram
@@ -112,6 +125,7 @@ sequenceDiagram
         EN->>EN: extractActivityCount(rawData, source)
         EN->>EN: extractCallers(rawData, source)
         EN->>EN: extractTimeWindow(rawData, source)
+        EN->>EN: extractRepositoryMetadata(rawData)
         
         EN->>ESvc: enrich(rawEvent)
         activate ESvc
@@ -131,6 +145,12 @@ sequenceDiagram
         EN->>Schema: setWindow()
         EN->>Schema: setMetadata()
         EN->>Schema: setConfidenceLevel()
+        alt RepositoryMetadata disponível
+            EN->>Schema: setRepository(repoInfo)
+            EN->>Schema: setDiscoverySource(GITHUB)
+        else Sem RepositoryMetadata
+            EN->>Schema: setDiscoverySource(DYNATRACE)
+        end
         
         EN-->>EN: ServiceActivityEvent normalizado
     end
@@ -162,6 +182,8 @@ sequenceDiagram
 
 **Notas importantes:**
 - Normalização remove detalhes específicos de cada fonte
+- EventNormalizer extrai RepositoryMetadata quando disponível (descoberta via GitHub)
+- Discovery source é definido (GITHUB ou DYNATRACE) baseado na presença de RepositoryMetadata
 - Enriquecimento adiciona metadados padronizados
 - Agregação temporal reduz volume em ~90% (janelas de 5 minutos)
 - Processamento determinístico através de ordenação
@@ -331,11 +353,12 @@ sequenceDiagram
 ```
 1. EXTRAÇÃO (a cada 5 min)
    Scheduler → ExtractionService → ExtractionOrchestrator → 
-   DynatraceAdapter → DynatraceServiceDiscovery → DynatraceBatchExtractor → 
-   DynatraceClient → Dynatrace API
+   DynatraceAdapter → RepositoryCatalog → GitHubClient → GitHub API
+   DynatraceAdapter → DynatraceBatchExtractor → DynatraceClient → Dynatrace API
 
 2. TRANSFORMAÇÃO (streaming)
    EventNormalizer → EnrichmentService → TemporalAggregator
+   (Inclui extração de RepositoryMetadata e definição de discoverySource)
 
 3. CARGA INICIAL
    KafkaProducer → Kafka (governance.activity.raw)

@@ -305,7 +305,7 @@ gantt
 
 **Duração Estimada**: 10 semanas (2.5 meses)
 
-**Nota**: Duração aumentada para considerar burocracia organizacional e complexidade de integrações em ambiente grande.
+**Nota**: Duração considerando complexidade de integrações em ambiente grande.
 
 ### 1.1 Descoberta de Serviços via Git (5 semanas)
 
@@ -428,7 +428,7 @@ gantt
 
 **Duração Estimada**: 8 semanas (2 meses)
 
-**Nota**: Duração aumentada para considerar burocracia organizacional, testes extensivos e validações em ambiente grande.
+**Nota**: Duração considerando testes extensivos e validações em ambiente grande.
 
 ### 2.1 Extração Básica de Dynatrace (4 semanas)
 
@@ -498,7 +498,7 @@ gantt
 
 **Duração Estimada**: 8 semanas (2 meses)
 
-**Nota**: Duração aumentada para considerar burocracia organizacional, configuração de infraestrutura e testes em ambiente grande.
+**Nota**: Duração considerando configuração de infraestrutura e testes em ambiente grande.
 
 ### 3.1 Pipeline Kafka (4 semanas)
 
@@ -577,7 +577,7 @@ gantt
 
 **Duração Estimada**: 8 semanas (2 meses)
 
-**Nota**: Duração aumentada para considerar burocracia organizacional, aprovações de PRs e integrações em ambiente grande.
+**Nota**: Duração considerando aprovações de PRs e integrações em ambiente grande.
 
 ### 4.1 Integração Backstage (4 semanas)
 
@@ -681,7 +681,7 @@ gantt
 
 **Duração Estimada**: 8 semanas (2 meses)
 
-**Nota**: Esta fase só deve ser iniciada após as fases anteriores estarem estáveis e em produção. Duração aumentada para considerar burocracia organizacional, aprovações de otimizações e processos de negócio em ambiente grande.
+**Nota**: Esta fase só deve ser iniciada após as fases anteriores estarem estáveis e em produção. Duração considerando aprovações de otimizações e processos de negócio em ambiente grande.
 
 ### 5.1 FinOps Básico (4 semanas)
 
@@ -834,8 +834,8 @@ gantt
 | **Fase 5** | FinOps | 8 semanas | 2 meses |
 | **TOTAL** | | **46 semanas** | **~12 meses** |
 
-**Nota**: As durações foram aumentadas para considerar:
-- Burocracia organizacional em ambiente grande
+**Nota**: As durações consideram:
+- Complexidade de integrações em ambiente grande
 - Tempo de aprovação de acessos e mudanças
 - Processos de validação e testes extensivos
 - Integrações complexas com múltiplas áreas
@@ -883,7 +883,7 @@ gantt
 
 Este plano inicia com uma **Fase 0 de Discovery** para alinhar com stakeholders e obter detalhamento técnico necessário, seguido pela **identificação de serviços e owners** como fundamento do sistema, **extração e normalização de dados**, **consolidação e decisão**, **integração com Backstage**, e finalmente **FinOps** para otimização de custos.
 
-O cronograma total de **12 meses** considera a burocracia organizacional e complexidade de integrações em ambiente grande, com tempo adequado para aprovações, validações e processos de negócio.
+O cronograma total de **12 meses** considera a complexidade de integrações em ambiente grande, com tempo adequado para aprovações, validações e processos de negócio.
 
 A integração com Backstage utiliza uma **abordagem híbrida**:
 - **Fase 1**: Criação de `catalog-info.yaml` via Pull Request (dados versionados)

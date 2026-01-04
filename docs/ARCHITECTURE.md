@@ -22,9 +22,10 @@ Catalog Traffic Engine é uma plataforma automatizada para descoberta de serviç
 - `ApiGatewayAdapter`: Extração de métricas de API Gateway (futuro)
 
 **Características**:
+- Descoberta de serviços via GitHub (RepositoryCatalog)
 - Processamento paralelo com workers distribuídos
 - Rate limiting e circuit breakers
-- Cache de service discovery
+- Cache de repositórios (TTL configurável)
 - Batching inteligente
 
 ### 2. Transformação (T)
@@ -97,7 +98,9 @@ Catalog Traffic Engine é uma plataforma automatizada para descoberta de serviç
 ## Fluxo de Dados
 
 ```
-Dynatrace → Adapter → Normalizer → Aggregator → Kafka (raw)
+GitHub (Repositories) → RepositoryCatalog → DynatraceAdapter
+                                                      ↓
+Dynatrace (Metrics) → DynatraceAdapter → Normalizer → Aggregator → Kafka (raw)
                                                       ↓
                                               Consolidation Worker
                                                       ↓

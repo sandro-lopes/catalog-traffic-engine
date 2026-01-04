@@ -17,7 +17,7 @@ O **Catalog Traffic Engine** é uma plataforma automatizada para:
 - Análise FinOps para otimização de custos
 
 **Duração do Projeto**: 12 meses (46 semanas)
-**Ambiente**: Organização grande com burocracia significativa
+**Ambiente**: Organização grande
 **Escala**: 2.000+ APIs/serviços
 
 ### Prompt para Definição de OKRs
@@ -556,7 +556,7 @@ Identificar e quantificar oportunidades de otimização de custos, gerando econo
 - [ ] Há incentivos para adoção? (gamificação, reconhecimento)
 - [ ] Qual o processo de feedback? (surveys, retrospectivas)
 
-### 3.3 Processos e Burocracia
+### 3.3 Processos Organizacionais
 
 - [ ] Qual o processo de aprovação de projetos? (tickets, comitês)
 - [ ] Quanto tempo leva para aprovação de acessos? (dias, semanas)

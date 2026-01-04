@@ -4,6 +4,7 @@
 
 - Kubernetes cluster
 - Kafka/Confluent Cloud configurado
+- Acesso à API GitHub
 - Acesso à API Dynatrace
 - Acesso à API Backstage
 
@@ -23,6 +24,8 @@ Criar secret no Kubernetes:
 ```bash
 kubectl create secret generic catalog-traffic-engine-secrets \
   --from-literal=kafka-bootstrap-servers=<kafka-url> \
+  --from-literal=github-organization=<github-org> \
+  --from-literal=github-api-token=<github-token> \
   --from-literal=dynatrace-api-url=<dynatrace-url> \
   --from-literal=dynatrace-api-token=<token> \
   --from-literal=backstage-api-url=<backstage-url> \
@@ -109,9 +112,10 @@ resources:
 
 ### Adapter não extrai dados
 
-1. Verificar credenciais Dynatrace
-2. Verificar circuit breaker status
-3. Verificar logs para erros de API
+1. Verificar credenciais GitHub
+2. Verificar credenciais Dynatrace
+3. Verificar circuit breaker status
+4. Verificar logs para erros de API
 
 ### Consolidação lenta
 
