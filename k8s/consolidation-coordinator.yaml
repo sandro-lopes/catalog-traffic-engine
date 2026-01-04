@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: catalog-traffic-engine-consolidation-coordinator
+  namespace: governance
+  labels:
+    app: catalog-traffic-engine
+    component: consolidation-coordinator
+spec:
+  schedule: "0 2 * * *" # 2 AM diariamente
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: catalog-traffic-engine
+            component: consolidation-coordinator
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: coordinator
+            image: catalog-traffic-engine:latest
+            imagePullPolicy: Always
+            command: ["java", "-jar", "/app/catalog-traffic-engine.jar"]
+            args: ["--spring.profiles.active=consolidation"]
+            env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-traffic-engine-secrets
+                  key: kafka-bootstrap-servers
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
+              limits:
+                memory: "4Gi"
+                cpu: "2000m"
+            livenessProbe:
+              httpGet:
+                path: /actuator/health
+                port: 8080
+              initialDelaySeconds: 60
+              periodSeconds: 30
+

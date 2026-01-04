@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-traffic-engine-config
+  namespace: governance
+data:
+  application.yml: |
+    spring:
+      kafka:
+        bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    dynatrace:
+      api:
+        url: ${DYNATRACE_API_URL}
+        timeout-seconds: 30
+      extraction:
+        batch-size: 50
+        rate-limit-per-second: 10
+        service-discovery-cache-ttl-minutes: 60
+        max-workers: 20
+    consolidation:
+      job:
+        cron: "0 2 * * *"
+        window-days: 30
+        workers:
+          min: 10
+          max: 100
+          memory-gb: 2
+    backstage:
+      api:
+        url: ${BACKSTAGE_API_URL}
+        timeout-seconds: 30
+      integration:
+        batch-size: 100
+        update-interval-seconds: 60
+    aggregation:
+      temporal-window-minutes: 5
+

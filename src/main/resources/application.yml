@@ -1,0 +1,214 @@
+spring:
+  application:
+    name: catalog-traffic-engine
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      compression-type: gzip
+      batch-size: 16384
+      linger-ms: 10
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:governance-default}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 500
+    listener:
+      ack-mode: manual
+      concurrency: 5
+
+kafka:
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  topics:
+    activity-raw:
+      partitions: 30
+      replication-factor: 3
+    activity-snapshot:
+      partitions: 30
+      replication-factor: 3
+
+# Dynatrace Configuration
+dynatrace:
+  api:
+    url: ${DYNATRACE_API_URL:https://your-environment.live.dynatrace.com}
+    token: ${DYNATRACE_API_TOKEN:}
+    timeout-seconds: 30
+  extraction:
+    batch-size: 50
+    rate-limit-per-second: 10
+    service-discovery-cache-ttl-minutes: 60
+    max-workers: 20
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      dynatrace:
+        registerHealthIndicator: true
+        slidingWindowSize: 100
+        minimumNumberOfCalls: 10
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+      github:
+        registerHealthIndicator: true
+        slidingWindowSize: 100
+        minimumNumberOfCalls: 10
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+  ratelimiter:
+    instances:
+      dynatrace:
+        limitForPeriod: 10
+        limitRefreshPeriod: 1s
+        timeoutDuration: 5s
+      github:
+        limitForPeriod: 30
+        limitRefreshPeriod: 60s
+        timeoutDuration: 5s
+  retry:
+    instances:
+      dynatrace:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+      github:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+
+# Consolidation Configuration
+consolidation:
+  job:
+    cron: "0 2 * * *" # 2 AM diariamente
+    window-days: 30
+    workers:
+      min: 10
+      max: 100
+      memory-gb: 2
+
+# Backstage Configuration
+backstage:
+  api:
+    url: ${BACKSTAGE_API_URL:http://localhost:7007}
+    token: ${BACKSTAGE_API_TOKEN:}
+    timeout-seconds: 30
+  integration:
+    phase: ${BACKSTAGE_INTEGRATION_PHASE:1}  # Incrementar conforme fases avançam
+    batch-size: 100
+    update-interval-seconds: 60
+  catalog-yaml:
+    enabled: ${BACKSTAGE_CATALOG_YAML_ENABLED:true}
+    path: ${BACKSTAGE_CATALOG_YAML_PATH:.backstage/catalog-info.yaml}
+    branch-prefix: ${BACKSTAGE_CATALOG_YAML_BRANCH_PREFIX:backstage/catalog-info-}
+    batch-size: ${BACKSTAGE_CATALOG_YAML_BATCH_SIZE:50}
+    pr-title: ${BACKSTAGE_CATALOG_YAML_PR_TITLE:chore: Adicionar catalog-info.yaml para Backstage}
+    pr-body: ${BACKSTAGE_CATALOG_YAML_PR_BODY:Este PR adiciona o arquivo catalog-info.yaml necessário para descoberta no Backstage.\n\nDados gerados automaticamente pelo Catalog Traffic Engine.}
+
+# Aggregation Configuration
+aggregation:
+  temporal-window-minutes: 5
+
+# Azure Cost Management Configuration
+azure:
+  cost-management:
+    api:
+      url: ${AZURE_COST_API_URL:https://management.azure.com}
+      token: ${AZURE_COST_API_TOKEN:}
+      timeout-seconds: 30
+    subscription-id: ${AZURE_SUBSCRIPTION_ID:}
+
+# FinOps Configuration
+finops:
+  analysis-window-days: 30
+  low-utilization-threshold: 20
+  downscale-threshold: 30
+  rightsize-threshold: 10
+  job:
+    cron: ${FINOPS_JOB_CRON:0 3 * * 1} # Segunda-feira 3 AM
+
+# Azure Pricing (USD)
+pricing:
+  azure:
+    app-service:
+      basic:
+        monthly: 13.14
+      standard:
+        monthly: 54.75
+      premium:
+        monthly: 219.00
+    container-instances:
+      cpu-hour: 0.000012
+      memory-gb-hour: 0.0000015
+
+# GitHub Configuration
+github:
+  organization: ${GITHUB_ORGANIZATION:}
+  api:
+    url: ${GITHUB_API_URL:https://api.github.com}
+    token: ${GITHUB_API_TOKEN:}
+    timeout-seconds: 30
+  discovery:
+    siglas: ${GITHUB_SIGLAS:}
+    types: ${GITHUB_TYPES:api,bff,gtw,mfe}
+    tags: ${GITHUB_TAGS:}
+    cache-ttl-minutes: 240
+
+# Ownership Inference Configuration
+ownership:
+  inference:
+    enabled: ${OWNERSHIP_INFERENCE_ENABLED:true}
+    min-confidence: ${OWNERSHIP_INFERENCE_MIN_CONFIDENCE:0.60}
+    commit-history:
+      lookback-months: ${OWNERSHIP_COMMIT_LOOKBACK_MONTHS:6}
+      recent-months: ${OWNERSHIP_COMMIT_RECENT_MONTHS:3}
+      recent-weight: ${OWNERSHIP_COMMIT_RECENT_WEIGHT:2.0}
+      min-commits: ${OWNERSHIP_COMMIT_MIN_COMMITS:5}
+      ignore-bots: ${OWNERSHIP_COMMIT_IGNORE_BOTS:true}
+      bot-patterns:
+        - ".*-bot$"
+        - ".*-ci$"
+        - ".*-automation$"
+    dependency-analysis:
+      enabled: ${OWNERSHIP_DEPENDENCY_ANALYSIS_ENABLED:false}  # Habilitar após Fase 2
+      min-caller-percent: ${OWNERSHIP_DEPENDENCY_MIN_CALLER_PERCENT:0.70}
+
+
+# Observability
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.codingbetter: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+

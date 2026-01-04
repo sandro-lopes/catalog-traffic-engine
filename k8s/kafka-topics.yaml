@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-topics-config
+  namespace: governance
+data:
+  topics.yaml: |
+    topics:
+      - name: governance.activity.raw
+        partitions: 30
+        replication-factor: 3
+        config:
+          retention.ms: "3024000000"  # 35 dias
+          compression.type: "gzip"
+          cleanup.policy: "delete"
+      
+      - name: governance.activity.snapshot
+        partitions: 30
+        replication-factor: 3
+        config:
+          retention.ms: "7776000000"  # 90 dias
+          compression.type: "gzip"
+          cleanup.policy: "delete"
+

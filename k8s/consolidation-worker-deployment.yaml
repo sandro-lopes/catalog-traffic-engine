@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-traffic-engine-consolidation-worker
+  namespace: governance
+  labels:
+    app: catalog-traffic-engine
+    component: consolidation-worker
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: catalog-traffic-engine
+      component: consolidation-worker
+  template:
+    metadata:
+      labels:
+        app: catalog-traffic-engine
+        component: consolidation-worker
+    spec:
+      containers:
+      - name: worker
+        image: catalog-traffic-engine:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            secretKeyRef:
+              name: catalog-traffic-engine-secrets
+              key: kafka-bootstrap-servers
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+

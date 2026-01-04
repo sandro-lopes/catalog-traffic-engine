@@ -1,0 +1,36 @@
+# Configuração específica do Kafka
+# Este arquivo pode ser usado para override de configurações em diferentes ambientes
+
+kafka:
+  producer:
+    # Configurações de performance
+    batch-size: 16384
+    linger-ms: 10
+    compression-type: gzip
+    
+    # Configurações de confiabilidade
+    acks: all
+    retries: 3
+    max-in-flight-requests-per-connection: 5
+    enable-idempotence: true
+    
+    # Configurações de buffer
+    buffer-memory: 33554432 # 32MB
+    
+  consumer:
+    # Configurações de performance
+    max-poll-records: 500
+    fetch-min-bytes: 1
+    fetch-max-wait-ms: 500
+    
+    # Configurações de confiabilidade
+    enable-auto-commit: false
+    auto-offset-reset: earliest
+    
+    # Configurações de sessão
+    session-timeout-ms: 30000
+    heartbeat-interval-ms: 3000
+    
+    # Configurações de partição
+    max-partition-fetch-bytes: 1048576 # 1MB
+

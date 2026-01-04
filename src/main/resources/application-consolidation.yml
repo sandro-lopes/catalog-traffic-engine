@@ -1,0 +1,19 @@
+# Perfil específico para job de consolidação
+spring:
+  kafka:
+    consumer:
+      group-id: governance-consolidation
+
+consolidation:
+  job:
+    cron: "0 2 * * *"
+    window-days: 30
+    workers:
+      min: 10
+      max: 100
+      memory-gb: 2
+
+# Desabilita extração no perfil de consolidação
+extraction:
+  enabled: false
+

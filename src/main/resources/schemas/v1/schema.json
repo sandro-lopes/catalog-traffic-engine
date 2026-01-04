@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ServiceActivityEvent.v1",
+  "type": "object",
+  "required": [
+    "service.id",
+    "activity.count",
+    "timestamps.window",
+    "confidence.level",
+    "metadata"
+  ],
+  "properties": {
+    "service.id": {
+      "type": "string",
+      "description": "Identificador único do serviço"
+    },
+    "activity.count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Contador de atividade na janela de tempo"
+    },
+    "dependencies.callers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lista de serviços que chamam este serviço"
+    },
+    "timestamps.window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "confidence.level": {
+      "type": "string",
+      "enum": ["HIGH", "MEDIUM", "LOW"],
+      "description": "Nível de confiança do sinal"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["environment", "source"],
+      "properties": {
+        "environment": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
+
