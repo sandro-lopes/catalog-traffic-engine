@@ -1,0 +1,143 @@
+name: Validate Owner (POL-03)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: Name of the service/component
+      backstage-url:
+        required: false
+        type: string
+        description: Backstage API URL
+        default: ${{ secrets.BACKSTAGE_API_URL }}
+      deployment-path:
+        required: false
+        type: string
+        description: Path to deployment.yaml file
+        default: k8s/deployment.yaml
+      validate-deployment:
+        required: false
+        type: boolean
+        description: Validate owner in deployment.yaml
+        default: true
+    secrets:
+      BACKSTAGE_API_TOKEN:
+        required: false
+        description: Backstage API token
+
+jobs:
+  validate-owner:
+    name: Validate Component Owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Owner in Backstage
+        if: inputs.backstage-url != '' && secrets.BACKSTAGE_API_TOKEN != ''
+        id: validate-backstage-owner
+        run: |
+          SERVICE_NAME="${{ inputs.service-name }}"
+          BACKSTAGE_URL="${{ inputs.backstage-url }}"
+          BACKSTAGE_TOKEN="${{ secrets.BACKSTAGE_API_TOKEN }}"
+          
+          echo "Validating owner in Backstage for: $SERVICE_NAME"
+          
+          # Get entity from Backstage
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $BACKSTAGE_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$BACKSTAGE_URL/api/catalog/entities/by-name/component/$SERVICE_NAME")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          ENTITY_JSON=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to fetch entity from Backstage (HTTP $HTTP_CODE)"
+            echo "Response: $ENTITY_JSON"
+            exit 1
+          fi
+          
+          # Extract owner from spec.owner
+          OWNER=$(echo "$ENTITY_JSON" | jq -r '.spec.owner // empty')
+          
+          if [ -z "$OWNER" ] || [ "$OWNER" = "null" ]; then
+            echo "ERROR: Component does not have an owner in Backstage"
+            echo "Entity spec: $(echo "$ENTITY_JSON" | jq -r '.spec // {}')"
+            exit 1
+          fi
+          
+          # Also check annotation
+          ANNOTATION_OWNER=$(echo "$ENTITY_JSON" | jq -r '.metadata.annotations["backstage.io/owner"] // empty')
+          
+          if [ -n "$ANNOTATION_OWNER" ] && [ "$ANNOTATION_OWNER" != "$OWNER" ]; then
+            echo "WARNING: Owner mismatch between spec.owner ($OWNER) and annotation ($ANNOTATION_OWNER)"
+          fi
+          
+          echo "✓ Owner validated in Backstage: $OWNER"
+          echo "OWNER=$OWNER" >> $GITHUB_OUTPUT
+
+      - name: Validate Owner in Deployment
+        if: inputs.validate-deployment == true
+        id: validate-deployment-owner
+        run: |
+          DEPLOYMENT_PATH="${{ inputs.deployment-path }}"
+          
+          if [ ! -f "$DEPLOYMENT_PATH" ]; then
+            echo "WARNING: Deployment file not found: $DEPLOYMENT_PATH"
+            echo "Skipping deployment owner validation"
+            exit 0
+          fi
+          
+          echo "Validating owner in deployment file: $DEPLOYMENT_PATH"
+          
+          # Install yq if not available
+          if ! command -v yq &> /dev/null; then
+            echo "Installing yq..."
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          
+          # Check owner annotation
+          DEPLOYMENT_OWNER=$(yq eval '.metadata.annotations["backstage.io/owner"] // empty' "$DEPLOYMENT_PATH" || echo "")
+          
+          if [ -z "$DEPLOYMENT_OWNER" ]; then
+            echo "ERROR: Deployment file does not have owner annotation 'backstage.io/owner'"
+            echo "File: $DEPLOYMENT_PATH"
+            exit 1
+          fi
+          
+          # Check if owner matches Backstage owner (if available)
+          if [ -n "${{ steps.validate-backstage-owner.outputs.OWNER }}" ]; then
+            BACKSTAGE_OWNER="${{ steps.validate-backstage-owner.outputs.OWNER }}"
+            if [ "$DEPLOYMENT_OWNER" != "$BACKSTAGE_OWNER" ]; then
+              echo "WARNING: Owner mismatch between Backstage ($BACKSTAGE_OWNER) and deployment ($DEPLOYMENT_OWNER)"
+            fi
+          fi
+          
+          # Check labels
+          DEPLOYMENT_LABEL_OWNER=$(yq eval '.metadata.labels["backstage.io/owner"] // empty' "$DEPLOYMENT_PATH" || echo "")
+          
+          if [ -z "$DEPLOYMENT_LABEL_OWNER" ]; then
+            echo "WARNING: Deployment file does not have owner label 'backstage.io/owner'"
+          fi
+          
+          echo "✓ Owner validated in deployment: $DEPLOYMENT_OWNER"
+          echo "DEPLOYMENT_OWNER=$DEPLOYMENT_OWNER" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Owner Validation Summary"
+          echo ""
+          if [ "${{ steps.validate-backstage-owner.outcome }}" == "success" ] || [ "${{ inputs.backstage-url }}" == "" ]; then
+            echo "✅ Owner validated in Backstage: ${{ steps.validate-backstage-owner.outputs.OWNER }}"
+          fi
+          if [ "${{ steps.validate-deployment-owner.outcome }}" == "success" ] || [ "${{ inputs.validate-deployment }}" == "false" ]; then
+            echo "✅ Owner validated in deployment: ${{ steps.validate-deployment-owner.outputs.DEPLOYMENT_OWNER }}"
+          fi
+          echo ""
+          echo "Component has a valid owner configured"
+

@@ -1,0 +1,133 @@
+name: Validate Contract Exists (POL-06)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: Name of the service/component
+      contracts-repo-url:
+        required: true
+        type: string
+        description: Base URL of the contracts repository
+      contract-path:
+        required: false
+        type: string
+        description: Path to contract file (relative to contracts repo root)
+        default: "openapi.yaml"
+      contract-format:
+        required: false
+        type: string
+        description: Contract format (openapi|asyncapi)
+        default: openapi
+      fail-if-missing:
+        required: false
+        type: boolean
+        description: Fail workflow if contract is missing
+        default: true
+    secrets:
+      CONTRACTS_REPO_TOKEN:
+        required: false
+        description: Token to access contracts repository (if private)
+
+jobs:
+  validate-contract:
+    name: Validate Contract Existence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Contract in Repository
+        id: validate-contract
+        run: |
+          SERVICE_NAME="${{ inputs.service-name }}"
+          CONTRACTS_REPO="${{ inputs.contracts-repo-url }}"
+          CONTRACT_PATH="${{ inputs.contract-path }}"
+          
+          echo "Validating contract existence for: $SERVICE_NAME"
+          echo "Contracts repository: $CONTRACTS_REPO"
+          echo "Contract path: $CONTRACT_PATH"
+          
+          # Construct contract URL
+          if [[ "$CONTRACTS_REPO" == *"github.com"* ]]; then
+            # GitHub repository
+            if [[ "$CONTRACTS_REPO" == *"raw.githubusercontent.com"* ]]; then
+              CONTRACT_URL="$CONTRACTS_REPO/$SERVICE_NAME/$CONTRACT_PATH"
+            else
+              # Convert github.com URL to raw.githubusercontent.com
+              CONTRACT_URL=$(echo "$CONTRACTS_REPO" | sed 's|github.com|raw.githubusercontent.com|' | sed 's|/tree/||' | sed 's|/blob/||')
+              CONTRACT_URL="$CONTRACT_URL/$SERVICE_NAME/$CONTRACT_PATH"
+            fi
+          else
+            # Assume direct URL or other format
+            CONTRACT_URL="$CONTRACTS_REPO/$SERVICE_NAME/$CONTRACT_PATH"
+          fi
+          
+          echo "Contract URL: $CONTRACT_URL"
+          
+          # Try to fetch contract
+          HTTP_CODE=0
+          if [ -n "${{ secrets.CONTRACTS_REPO_TOKEN }}" ]; then
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: token ${{ secrets.CONTRACTS_REPO_TOKEN }}" \
+              "$CONTRACT_URL")
+          else
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$CONTRACT_URL")
+          fi
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ Contract found at: $CONTRACT_URL"
+            
+            # Validate contract format if possible
+            if [ "${{ inputs.contract-format }}" = "openapi" ]; then
+              CONTRACT_CONTENT=""
+              if [ -n "${{ secrets.CONTRACTS_REPO_TOKEN }}" ]; then
+                CONTRACT_CONTENT=$(curl -s -H "Authorization: token ${{ secrets.CONTRACTS_REPO_TOKEN }}" "$CONTRACT_URL")
+              else
+                CONTRACT_CONTENT=$(curl -s "$CONTRACT_URL")
+              fi
+              
+              # Basic OpenAPI validation
+              if echo "$CONTRACT_CONTENT" | grep -q "openapi:" || echo "$CONTRACT_CONTENT" | grep -q "swagger:"; then
+                echo "✓ Contract appears to be valid OpenAPI format"
+              else
+                echo "WARNING: Contract may not be valid OpenAPI format"
+              fi
+            fi
+            
+            echo "CONTRACT_URL=$CONTRACT_URL" >> $GITHUB_OUTPUT
+            echo "CONTRACT_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "Contract not found (HTTP $HTTP_CODE)"
+            echo "URL attempted: $CONTRACT_URL"
+            
+            if [ "${{ inputs.fail-if-missing }}" = "true" ]; then
+              echo ""
+              echo "ERROR: Contract does not exist for service '$SERVICE_NAME'"
+              echo ""
+              echo "All components must have a contract (OpenAPI or AsyncAPI) in the"
+              echo "contracts repository to ensure proper API governance."
+              echo ""
+              echo "Expected location: $CONTRACT_URL"
+              exit 1
+            else
+              echo "WARNING: Contract not found, but fail-if-missing is false"
+              echo "CONTRACT_EXISTS=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Contract Existence Validation Summary"
+          echo ""
+          if [ "${{ steps.validate-contract.outputs.CONTRACT_EXISTS }}" = "true" ]; then
+            echo "✅ Contract found and validated"
+            echo "   URL: ${{ steps.validate-contract.outputs.CONTRACT_URL }}"
+          else
+            if [ "${{ inputs.fail-if-missing }}" = "true" ]; then
+              echo "❌ Contract validation failed"
+            else
+              echo "⚠️  Contract not found (non-blocking)"
+            fi
+          fi
+

@@ -1,0 +1,131 @@
+name: Validate Scaffolder Tag (POL-02)
+
+on:
+  workflow_call:
+    inputs:
+      required-tag:
+        required: false
+        type: string
+        description: Required tag indicating creation via Scaffolder
+        default: created-via-scaffolder
+      tag-location:
+        required: false
+        type: string
+        description: Where to check for tag (repository|backstage|both)
+        default: both
+
+jobs:
+  validate-scaffolder-tag:
+    name: Validate Scaffolder Creation Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Repository Tag
+        if: inputs.tag-location == 'repository' || inputs.tag-location == 'both'
+        id: validate-repo-tag
+        run: |
+          echo "Validating Scaffolder tag in repository: ${{ inputs.required-tag }}"
+          
+          # Check GitHub repository topics
+          if [ -n "${{ github.token }}" ]; then
+            REPO_TOPICS=$(curl -s -H "Authorization: token ${{ github.token }}" \
+              -H "Accept: application/vnd.github.mercy-preview+json" \
+              "https://api.github.com/repos/${{ github.repository }}/topics" \
+              | jq -r '.names[]' || echo "")
+            
+            if [ -z "$REPO_TOPICS" ]; then
+              echo "WARNING: Could not fetch repository topics"
+            fi
+          else
+            REPO_TOPICS=""
+          fi
+          
+          # Check git tags
+          GIT_TAGS=$(git tag -l || echo "")
+          
+          # Check if tag exists in topics or git tags
+          TAG_FOUND=false
+          if [ -n "$REPO_TOPICS" ] && echo "$REPO_TOPICS" | grep -q "${{ inputs.required-tag }}"; then
+            TAG_FOUND=true
+            echo "✓ Tag found in repository topics"
+          elif [ -n "$GIT_TAGS" ] && echo "$GIT_TAGS" | grep -q "${{ inputs.required-tag }}"; then
+            TAG_FOUND=true
+            echo "✓ Tag found in git tags"
+          fi
+          
+          if [ "$TAG_FOUND" = false ]; then
+            echo "ERROR: Required Scaffolder tag '${{ inputs.required-tag }}' not found in repository"
+            echo "This indicates the repository was not created via Backstage Scaffolder"
+            echo ""
+            echo "Repository topics: $REPO_TOPICS"
+            echo "Git tags: $GIT_TAGS"
+            exit 1
+          fi
+          
+          echo "✓ Repository tag validated: ${{ inputs.required-tag }}"
+
+      - name: Validate Backstage Tag
+        if: (inputs.tag-location == 'backstage' || inputs.tag-location == 'both') && secrets.BACKSTAGE_API_TOKEN != ''
+        id: validate-backstage-tag
+        env:
+          BACKSTAGE_URL: ${{ secrets.BACKSTAGE_API_URL }}
+          BACKSTAGE_TOKEN: ${{ secrets.BACKSTAGE_API_TOKEN }}
+          SERVICE_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ -z "$BACKSTAGE_URL" ] || [ -z "$BACKSTAGE_TOKEN" ]; then
+            echo "Skipping Backstage validation: credentials not provided"
+            exit 0
+          fi
+          
+          echo "Validating Scaffolder tag in Backstage: ${{ inputs.required-tag }}"
+          
+          # Get entity from Backstage
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $BACKSTAGE_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$BACKSTAGE_URL/api/catalog/entities/by-name/component/$SERVICE_NAME")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          ENTITY_JSON=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARNING: Failed to fetch entity from Backstage (HTTP $HTTP_CODE)"
+            echo "Skipping Backstage tag validation"
+            exit 0
+          fi
+          
+          # Check annotations for Scaffolder tag
+          ANNOTATIONS=$(echo "$ENTITY_JSON" | jq -r '.metadata.annotations // {}')
+          SCAFFOLDER_TAG=$(echo "$ANNOTATIONS" | jq -r '.["backstage.io/created-via"] // empty')
+          
+          if [ -z "$SCAFFOLDER_TAG" ] || [ "$SCAFFOLDER_TAG" != "${{ inputs.required-tag }}" ]; then
+            # Check tags as fallback
+            TAGS=$(echo "$ENTITY_JSON" | jq -r '.metadata.tags[]? // empty' || echo "")
+            if [ -z "$TAGS" ] || ! echo "$TAGS" | grep -q "${{ inputs.required-tag }}"; then
+              echo "ERROR: Required Scaffolder tag '${{ inputs.required-tag }}' not found in Backstage"
+              echo "Annotations: $ANNOTATIONS"
+              echo "Tags: $TAGS"
+              exit 1
+            fi
+          fi
+          
+          echo "✓ Backstage tag validated: ${{ inputs.required-tag }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Scaffolder Tag Validation Summary"
+          echo ""
+          if [ "${{ steps.validate-repo-tag.outcome }}" == "success" ] || [ "${{ inputs.tag-location }}" == "backstage" ]; then
+            echo "✅ Repository tag validated"
+          fi
+          if [ "${{ steps.validate-backstage-tag.outcome }}" == "success" ] || [ "${{ inputs.tag-location }}" == "repository" ]; then
+            echo "✅ Backstage tag validated"
+          fi
+          echo ""
+          echo "Component was created via Backstage Scaffolder"
+

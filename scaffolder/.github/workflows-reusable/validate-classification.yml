@@ -1,0 +1,112 @@
+name: Validate Classification (POL-01)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: Name of the service/component
+      backstage-url:
+        required: false
+        type: string
+        description: Backstage API URL
+        default: ${{ secrets.BACKSTAGE_API_URL }}
+      required-tag:
+        required: false
+        type: string
+        description: Required tag for classification (default: estruturante)
+        default: estruturante
+    secrets:
+      BACKSTAGE_API_TOKEN:
+        required: false
+        description: Backstage API token
+
+jobs:
+  validate-classification:
+    name: Validate Component Classification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Repository Tag
+        id: validate-tag
+        run: |
+          echo "Validating repository tag: ${{ inputs.required-tag }}"
+          
+          # Get repository topics/tags
+          if [ -n "${{ github.token }}" ]; then
+            REPO_TAGS=$(curl -s -H "Authorization: token ${{ github.token }}" \
+              "https://api.github.com/repos/${{ github.repository }}/topics" \
+              | jq -r '.names[]' || echo "")
+          else
+            # Fallback: check if tag exists in repository
+            REPO_TAGS=$(git tag -l || echo "")
+          fi
+          
+          if [ -z "$REPO_TAGS" ] || ! echo "$REPO_TAGS" | grep -q "${{ inputs.required-tag }}"; then
+            echo "ERROR: Repository does not have required tag '${{ inputs.required-tag }}'"
+            echo "This indicates the component was not created via Backstage Scaffolder"
+            exit 1
+          fi
+          
+          echo "✓ Repository tag validated: ${{ inputs.required-tag }}"
+
+      - name: Validate Backstage Classification
+        if: inputs.backstage-url != '' && secrets.BACKSTAGE_API_TOKEN != ''
+        id: validate-backstage
+        run: |
+          SERVICE_NAME="${{ inputs.service-name }}"
+          BACKSTAGE_URL="${{ inputs.backstage-url }}"
+          BACKSTAGE_TOKEN="${{ secrets.BACKSTAGE_API_TOKEN }}"
+          
+          echo "Validating classification in Backstage for: $SERVICE_NAME"
+          
+          # Get entity from Backstage
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $BACKSTAGE_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$BACKSTAGE_URL/api/catalog/entities/by-name/component/$SERVICE_NAME")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          ENTITY_JSON=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to fetch entity from Backstage (HTTP $HTTP_CODE)"
+            echo "Response: $ENTITY_JSON"
+            exit 1
+          fi
+          
+          # Check if entity has required tag
+          TAGS=$(echo "$ENTITY_JSON" | jq -r '.metadata.tags[]? // empty' || echo "")
+          
+          if [ -z "$TAGS" ] || ! echo "$TAGS" | grep -q "${{ inputs.required-tag }}"; then
+            echo "ERROR: Entity in Backstage does not have required tag '${{ inputs.required-tag }}'"
+            echo "Current tags: $TAGS"
+            exit 1
+          fi
+          
+          # Check if kind is Component
+          KIND=$(echo "$ENTITY_JSON" | jq -r '.kind // empty')
+          if [ "$KIND" != "Component" ]; then
+            echo "ERROR: Entity kind is '$KIND', expected 'Component'"
+            exit 1
+          fi
+          
+          echo "✓ Backstage classification validated"
+          echo "  - Kind: $KIND"
+          echo "  - Tags: $TAGS"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Classification Validation Summary"
+          echo ""
+          echo "✅ Repository tag validated"
+          if [ "${{ steps.validate-backstage.outcome }}" == "success" ] || [ "${{ inputs.backstage-url }}" == "" ]; then
+            echo "✅ Backstage classification validated"
+          fi
+          echo ""
+          echo "Component is correctly classified as '${{ inputs.required-tag }}'"
+

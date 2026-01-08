@@ -1,0 +1,166 @@
+name: Validate Metadata (POL-05)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: Name of the service/component
+      backstage-url:
+        required: false
+        type: string
+        description: Backstage API URL
+        default: ${{ secrets.BACKSTAGE_API_URL }}
+      required-fields:
+        required: false
+        type: string
+        description: Comma-separated list of required metadata fields
+        default: "name,domain,owner,type,lifecycle,criticality"
+    secrets:
+      BACKSTAGE_API_TOKEN:
+        required: false
+        description: Backstage API token
+
+jobs:
+  validate-metadata:
+    name: Validate Component Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Metadata in Backstage
+        id: validate-metadata
+        run: |
+          SERVICE_NAME="${{ inputs.service-name }}"
+          BACKSTAGE_URL="${{ inputs.backstage-url }}"
+          BACKSTAGE_TOKEN="${{ secrets.BACKSTAGE_API_TOKEN }}"
+          
+          if [ -z "$BACKSTAGE_URL" ] || [ -z "$BACKSTAGE_TOKEN" ]; then
+            echo "ERROR: Backstage URL and token are required for metadata validation"
+            exit 1
+          fi
+          
+          echo "Validating metadata in Backstage for: $SERVICE_NAME"
+          
+          # Get entity from Backstage
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $BACKSTAGE_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$BACKSTAGE_URL/api/catalog/entities/by-name/component/$SERVICE_NAME")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          ENTITY_JSON=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to fetch entity from Backstage (HTTP $HTTP_CODE)"
+            echo "Response: $ENTITY_JSON"
+            exit 1
+          fi
+          
+          # Parse required fields
+          IFS=',' read -ra REQUIRED_FIELDS <<< "${{ inputs.required-fields }}"
+          
+          MISSING_FIELDS=()
+          VALIDATED_FIELDS=()
+          
+          # Validate each required field
+          for field in "${REQUIRED_FIELDS[@]}"; do
+            field=$(echo "$field" | xargs) # trim whitespace
+            
+            case "$field" in
+              "name")
+                VALUE=$(echo "$ENTITY_JSON" | jq -r '.metadata.name // empty')
+                if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+                  MISSING_FIELDS+=("name")
+                else
+                  VALIDATED_FIELDS+=("name: $VALUE")
+                fi
+                ;;
+              "domain")
+                VALUE=$(echo "$ENTITY_JSON" | jq -r '.metadata.annotations["governance.domain"] // .spec.system // empty')
+                if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+                  MISSING_FIELDS+=("domain")
+                else
+                  VALIDATED_FIELDS+=("domain: $VALUE")
+                fi
+                ;;
+              "owner")
+                VALUE=$(echo "$ENTITY_JSON" | jq -r '.spec.owner // .metadata.annotations["backstage.io/owner"] // empty')
+                if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+                  MISSING_FIELDS+=("owner")
+                else
+                  VALIDATED_FIELDS+=("owner: $VALUE")
+                fi
+                ;;
+              "type")
+                VALUE=$(echo "$ENTITY_JSON" | jq -r '.spec.type // .metadata.annotations["governance.type"] // empty')
+                if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+                  MISSING_FIELDS+=("type")
+                else
+                  VALIDATED_FIELDS+=("type: $VALUE")
+                fi
+                ;;
+              "lifecycle")
+                VALUE=$(echo "$ENTITY_JSON" | jq -r '.spec.lifecycle // .metadata.annotations["backstage.io/lifecycle"] // empty')
+                if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+                  MISSING_FIELDS+=("lifecycle")
+                else
+                  VALIDATED_FIELDS+=("lifecycle: $VALUE")
+                fi
+                ;;
+              "criticality")
+                VALUE=$(echo "$ENTITY_JSON" | jq -r '.metadata.annotations["governance.criticality"] // empty')
+                if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+                  MISSING_FIELDS+=("criticality")
+                else
+                  VALIDATED_FIELDS+=("criticality: $VALUE")
+                fi
+                ;;
+              *)
+                echo "WARNING: Unknown required field: $field"
+                ;;
+            esac
+          done
+          
+          # Report results
+          echo ""
+          echo "## Metadata Validation Results"
+          echo ""
+          
+          if [ ${#VALIDATED_FIELDS[@]} -gt 0 ]; then
+            echo "✅ Validated fields:"
+            for field in "${VALIDATED_FIELDS[@]}"; do
+              echo "  - $field"
+            done
+            echo ""
+          fi
+          
+          if [ ${#MISSING_FIELDS[@]} -gt 0 ]; then
+            echo "❌ Missing required fields:"
+            for field in "${MISSING_FIELDS[@]}"; do
+              echo "  - $field"
+            done
+            echo ""
+            echo "ERROR: Component is missing required metadata fields"
+            echo "All components must have complete metadata to ensure proper governance"
+            exit 1
+          fi
+          
+          echo "✓ All required metadata fields are present"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Metadata Validation Summary"
+          echo ""
+          if [ "${{ steps.validate-metadata.outcome }}" == "success" ]; then
+            echo "✅ All required metadata fields validated"
+            echo ""
+            echo "Required fields: ${{ inputs.required-fields }}"
+          else
+            echo "❌ Metadata validation failed"
+            echo "Please ensure all required fields are present in Backstage"
+          fi
+

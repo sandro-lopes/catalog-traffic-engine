@@ -1,0 +1,248 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: spring-boot-api-estruturante
+  title: Spring Boot API - Componente Estruturante
+  description: Template para criar novos componentes estruturantes Spring Boot API com conformidade automática às políticas de governança
+  tags:
+    - java
+    - spring-boot
+    - api
+    - estruturante
+    - backend
+spec:
+  owner: platform-engineering
+  type: service
+
+  parameters:
+    - title: Informações do Componente
+      required:
+        - componentName
+        - domain
+        - componentType
+        - lifecycle
+        - criticality
+      properties:
+        componentName:
+          title: Nome do Componente
+          type: string
+          description: Nome do componente (ex: usuario, proposta, elegibilidade)
+          pattern: '^[a-z][a-z0-9-]*$'
+          ui:autofocus: true
+        domain:
+          title: Domínio
+          type: string
+          description: Domínio de negócio do componente
+          enum:
+            - core
+            - produtos
+            - vendas
+            - operacoes
+            - financeiro
+            - outros
+        componentType:
+          title: Tipo do Componente
+          type: string
+          description: Tipo do componente estruturante
+          enum:
+            - api
+            - bff
+            - gtw
+            - service
+          default: api
+        lifecycle:
+          title: Ciclo de Vida Inicial
+          type: string
+          description: Estado inicial do ciclo de vida
+          enum:
+            - experimental
+            - active
+          default: experimental
+        criticality:
+          title: Criticidade
+          type: string
+          description: Nível de criticidade do componente
+          enum:
+            - critical
+            - high
+            - medium
+            - low
+          default: medium
+        createContract:
+          title: Criar Contrato OpenAPI Inicial?
+          type: boolean
+          description: Se marcado, cria contrato OpenAPI básico e publica no gateway
+          default: true
+        description:
+          title: Descrição
+          type: string
+          description: Descrição do componente
+          default: Componente estruturante criado via Backstage Scaffolder
+        repoUrl:
+          title: Repository URL
+          type: string
+          description: URL do repositório GitHub onde o componente será criado
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+        contractsRepoUrl:
+          title: Contracts Repository URL
+          type: string
+          description: URL do repositório de contratos (opcional, usado apenas se criar contrato)
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton
+        copyWithoutRender:
+          - .github/**
+          - k8s/**
+        values:
+          componentName: ${{ parameters.componentName }}
+          domain: ${{ parameters.domain }}
+          componentType: ${{ parameters.componentType }}
+          lifecycle: ${{ parameters.lifecycle }}
+          criticality: ${{ parameters.criticality }}
+          createContract: ${{ parameters.createContract }}
+          description: ${{ parameters.description }}
+          owner: ${{ context.user.entity.metadata.name }}
+          componentNameTitle: ${{ parameters.componentName | title }}
+
+    - id: rename-files
+      name: Rename Template Files and Directories
+      action: script:execute
+      input:
+        script: |
+          # Renomear diretório e arquivo Java após fetch:template
+          if [ -d "src/main/java/com/codingbetter/COMPONENT_NAME" ]; then
+            mv "src/main/java/com/codingbetter/COMPONENT_NAME" "src/main/java/com/codingbetter/${{ parameters.componentName }}"
+          fi
+          if [ -f "src/main/java/com/codingbetter/${{ parameters.componentName }}/COMPONENT_NAME_TITLE_Application.java" ]; then
+            mv "src/main/java/com/codingbetter/${{ parameters.componentName }}/COMPONENT_NAME_TITLE_Application.java" \
+               "src/main/java/com/codingbetter/${{ parameters.componentName }}/${{ parameters.componentName | title }}Application.java"
+          fi
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        allowedHosts:
+          - github.com
+        description: ${{ parameters.description }}
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        gitCommitMessage: "chore: Initial commit - Componente estruturante criado via Backstage Scaffolder"
+        gitAuthorName: ${{ context.user.entity.spec.profile?.displayName ?? context.user.entity.metadata.name }}
+        gitAuthorEmail: ${{ context.user.entity.spec.profile?.email ?? 'noreply@example.com' }}
+
+    - id: register
+      name: Register Component in Backstage
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps.publish.output.remoteUrl }}
+        catalogInfoPath: '/catalog-info.yaml'
+        catalogInfo:
+          apiVersion: backstage.io/v1alpha1
+          kind: Component
+          metadata:
+            name: ${{ parameters.componentName }}
+            title: ${{ parameters.componentName | title }}
+            description: ${{ parameters.description }}
+            tags:
+              - estruturante
+              - ${{ parameters.componentType }}
+              - ${{ parameters.domain }}
+            annotations:
+              backstage.io/owner: ${{ context.user.entity.metadata.name }}
+              backstage.io/lifecycle: ${{ parameters.lifecycle }}
+              governance.criticality: ${{ parameters.criticality }}
+              governance.domain: ${{ parameters.domain }}
+              governance.type: ${{ parameters.componentType }}
+          spec:
+            type: service
+            lifecycle: ${{ parameters.lifecycle }}
+            owner: ${{ context.user.entity.metadata.name }}
+            system: ${{ parameters.domain }}
+
+    - id: create-contract
+      if: ${{ parameters.createContract }}
+      name: Create OpenAPI Contract
+      action: github:actions:dispatch
+      input:
+        repoUrl: ${{ parameters.contractsRepoUrl }}
+        workflowId: create-contract.yml
+        branch: main
+        workflowInputs:
+          serviceName: ${{ parameters.componentName }}
+          serviceType: ${{ parameters.componentType }}
+          domain: ${{ parameters.domain }}
+
+    - id: publish-gateway
+      if: ${{ parameters.createContract }}
+      name: Publish Contract to Gateway
+      action: http:request
+      input:
+        method: POST
+        url: ${{ secrets.AXWAY_GATEWAY_API_URL }}/api/apis
+        headers:
+          Authorization: Bearer ${{ secrets.AXWAY_GATEWAY_TOKEN }}
+          Content-Type: application/json
+        body:
+          name: ${{ parameters.componentName }}
+          version: "1.0.0"
+          contractUrl: ${{ steps.create-contract.output.contractUrl }}
+          tags:
+            - estruturante
+            - ${{ parameters.componentType }}
+
+    - id: azure-ad-register
+      name: Register in Azure AD
+      action: http:request
+      input:
+        method: POST
+        url: https://graph.microsoft.com/v1.0/applications
+        headers:
+          Authorization: Bearer ${{ secrets.AZURE_AD_TOKEN }}
+          Content-Type: application/json
+        body:
+          displayName: ${{ parameters.componentName }}
+          signInAudience: AzureADMyOrg
+          requiredResourceAccess:
+            - resourceAppId: "00000003-0000-0000-c000-000000000000"
+              resourceAccess:
+                - id: "e1fe6dd8-ba31-4d61-89e7-88639da4683d"
+                  type: Scope
+
+    - id: servicenow-register
+      name: Register in ServiceNow CMDB
+      action: http:request
+      input:
+        method: POST
+        url: ${{ secrets.SERVICENOW_API_URL }}/api/now/table/cmdb_ci_service
+        headers:
+          Authorization: Basic ${{ secrets.SERVICENOW_CREDENTIALS }}
+          Content-Type: application/json
+        body:
+          name: ${{ parameters.componentName }}
+          u_type: ${{ parameters.componentType }}
+          u_domain: ${{ parameters.domain }}
+          u_lifecycle: ${{ parameters.lifecycle }}
+          u_criticality: ${{ parameters.criticality }}
+          u_owner: ${{ context.user.entity.metadata.name }}
+          u_backstage_url: ${{ steps.register.output.entityRef }}
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps.publish.output.remoteUrl }}
+      - title: Open in Backstage
+        icon: catalog
+        entityRef: ${{ steps.register.output.entityRef }}
+

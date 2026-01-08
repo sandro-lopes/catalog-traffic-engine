@@ -1,0 +1,115 @@
+name: Validate Template Fingerprint (POL-02)
+
+on:
+  workflow_call:
+    inputs:
+      approved-fingerprint:
+        required: true
+        type: string
+        description: Approved template fingerprint (SHA256 hash)
+      template-files:
+        required: false
+        type: string
+        description: Comma-separated list of template files to check
+        default: "pom.xml,Dockerfile"
+      fingerprint-algorithm:
+        required: false
+        type: string
+        description: Hash algorithm to use (sha256|sha512)
+        default: sha256
+
+jobs:
+  validate-fingerprint:
+    name: Validate Template Fingerprint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Current Fingerprint
+        id: calculate-fingerprint
+        run: |
+          echo "Calculating fingerprint for template files..."
+          
+          # Parse template files
+          IFS=',' read -ra FILES <<< "${{ inputs.template-files }}"
+          
+          FINGERPRINT_INPUT=""
+          FILES_FOUND=0
+          
+          for file in "${FILES[@]}"; do
+            file=$(echo "$file" | xargs) # trim whitespace
+            if [ -f "$file" ]; then
+              echo "  - Found: $file"
+              FINGERPRINT_INPUT="${FINGERPRINT_INPUT}$(cat "$file")\n"
+              FILES_FOUND=$((FILES_FOUND + 1))
+            else
+              echo "  - WARNING: File not found: $file"
+            fi
+          done
+          
+          if [ $FILES_FOUND -eq 0 ]; then
+            echo "ERROR: No template files found to calculate fingerprint"
+            exit 1
+          fi
+          
+          # Calculate fingerprint
+          if [ "${{ inputs.fingerprint-algorithm }}" = "sha512" ]; then
+            CURRENT_FINGERPRINT=$(echo -e "$FINGERPRINT_INPUT" | sha512sum | cut -d' ' -f1)
+          else
+            CURRENT_FINGERPRINT=$(echo -e "$FINGERPRINT_INPUT" | sha256sum | cut -d' ' -f1)
+          fi
+          
+          echo "Current fingerprint (${{ inputs.fingerprint-algorithm }}): $CURRENT_FINGERPRINT"
+          echo "FINGERPRINT=$CURRENT_FINGERPRINT" >> $GITHUB_OUTPUT
+          echo "FILES_COUNT=$FILES_FOUND" >> $GITHUB_OUTPUT
+
+      - name: Validate Against Approved Fingerprint
+        id: validate-fingerprint
+        run: |
+          APPROVED="${{ inputs.approved-fingerprint }}"
+          CURRENT="${{ steps.calculate-fingerprint.outputs.FINGERPRINT }}"
+          
+          echo "Comparing fingerprints..."
+          echo "  Approved: $APPROVED"
+          echo "  Current:  $CURRENT"
+          
+          if [ "$CURRENT" != "$APPROVED" ]; then
+            echo ""
+            echo "ERROR: Template fingerprint mismatch!"
+            echo ""
+            echo "The current template files do not match the approved template."
+            echo "This indicates the code may have been modified manually or"
+            echo "created from an unapproved template."
+            echo ""
+            echo "Files checked: ${{ inputs.template-files }}"
+            echo "Files found: ${{ steps.calculate-fingerprint.outputs.FILES_COUNT }}"
+            echo ""
+            echo "If this is intentional, update the approved fingerprint in the"
+            echo "workflow configuration or repository secrets."
+            exit 1
+          fi
+          
+          echo "✓ Template fingerprint validated"
+          echo "  Files checked: ${{ steps.calculate-fingerprint.outputs.FILES_COUNT }}"
+          echo "  Algorithm: ${{ inputs.fingerprint-algorithm }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Template Fingerprint Validation Summary"
+          echo ""
+          echo "✅ Fingerprint calculated for ${{ steps.calculate-fingerprint.outputs.FILES_COUNT }} file(s)"
+          echo "✅ Fingerprint matches approved template"
+          echo ""
+          echo "Template files validated:"
+          IFS=',' read -ra FILES <<< "${{ inputs.template-files }}"
+          for file in "${FILES[@]}"; do
+            file=$(echo "$file" | xargs)
+            if [ -f "$file" ]; then
+              echo "  ✓ $file"
+            fi
+          done
+

@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${{ parameters.componentName }}
+  namespace: ${{ parameters.domain }}
+  labels:
+    app: ${{ parameters.componentName }}
+    component: ${{ parameters.componentType }}
+    domain: ${{ parameters.domain }}
+    lifecycle: ${{ parameters.lifecycle }}
+    criticality: ${{ parameters.criticality }}
+    backstage.io/owner: ${{ parameters.owner }}
+    governance/estruturante: "true"
+  annotations:
+    backstage.io/owner: ${{ parameters.owner }}
+    backstage.io/lifecycle: ${{ parameters.lifecycle }}
+    governance.criticality: ${{ parameters.criticality }}
+    governance.domain: ${{ parameters.domain }}
+    governance.type: ${{ parameters.componentType }}
+    dynatrace.com/inject: "true"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: {{parameters.componentName}}
+  template:
+    metadata:
+      labels:
+        app: ${{ parameters.componentName }}
+        component: ${{ parameters.componentType }}
+        domain: ${{ parameters.domain }}
+        version: "1.0.0"
+        backstage.io/owner: ${{ parameters.owner }}
+      annotations:
+        backstage.io/owner: ${{ parameters.owner }}
+        backstage.io/lifecycle: ${{ parameters.lifecycle }}
+        governance.criticality: ${{ parameters.criticality }}
+        governance.domain: ${{ parameters.domain }}
+        governance.type: ${{ parameters.componentType }}
+    spec:
+      serviceAccountName: ${{ parameters.componentName }}-sa
+      initContainers:
+      - name: dynatrace-oneagent
+        image: docker.io/dynatrace/oneagent:latest
+        env:
+        - name: DT_TENANT
+          valueFrom:
+            secretKeyRef:
+              name: dynatrace-secrets
+              key: tenant
+        - name: DT_TENANT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: dynatrace-secrets
+              key: token
+        - name: DT_SERVER
+          valueFrom:
+            secretKeyRef:
+              name: dynatrace-secrets
+              key: server
+        volumeMounts:
+        - name: oneagent
+          mountPath: /opt/dynatrace/oneagent
+      containers:
+      - name: ${{ parameters.componentName }}
+        image: ${{ parameters.componentName }}:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: SPRING_APPLICATION_NAME
+          value: ${{ parameters.componentName }}
+        - name: COMPONENT_NAME
+          value: ${{ parameters.componentName }}
+        - name: COMPONENT_TYPE
+          value: ${{ parameters.componentType }}
+        - name: COMPONENT_DOMAIN
+          value: ${{ parameters.domain }}
+        - name: COMPONENT_LIFECYCLE
+          value: ${{ parameters.lifecycle }}
+        - name: COMPONENT_CRITICALITY
+          value: ${{ parameters.criticality }}
+        - name: COMPONENT_OWNER
+          value: ${{ parameters.owner }}
+        - name: DYNATRACE_ONEAGENT_ENABLED
+          value: "true"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        volumeMounts:
+        - name: oneagent
+          mountPath: /opt/dynatrace/oneagent
+          readOnly: true
+      volumes:
+      - name: oneagent
+        emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${{ parameters.componentName }}-sa
+  namespace: ${{ parameters.domain }}
+  labels:
+    app: ${{ parameters.componentName }}
+    backstage.io/owner: ${{ parameters.owner }}
+  annotations:
+    backstage.io/owner: ${{ parameters.owner }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${{ parameters.componentName }}
+  namespace: ${{ parameters.domain }}
+  labels:
+    app: ${{ parameters.componentName }}
+    component: ${{ parameters.componentType }}
+    domain: ${{ parameters.domain }}
+    backstage.io/owner: ${{ parameters.owner }}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: ${{ parameters.componentName }}
+

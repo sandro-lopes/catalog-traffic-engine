@@ -1,0 +1,146 @@
+name: Fail Fast Build (POL-16)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: Name of the service/component
+      backstage-url:
+        required: false
+        type: string
+        description: Backstage API URL
+      contracts-repo-url:
+        required: false
+        type: string
+        description: Contracts repository URL
+      gateway-url:
+        required: false
+        type: string
+        description: Gateway API URL
+      gateway-type:
+        required: false
+        type: string
+        description: Gateway type (axway|apim)
+        default: axway
+      deployment-path:
+        required: false
+        type: string
+        description: Path to deployment.yaml
+        default: k8s/deployment.yaml
+      approved-fingerprint:
+        required: false
+        type: string
+        description: Approved template fingerprint
+      skip-validations:
+        required: false
+        type: string
+        description: Comma-separated list of validations to skip
+        default: ""
+    secrets:
+      BACKSTAGE_API_TOKEN:
+        required: false
+        description: Backstage API token
+      GATEWAY_TOKEN:
+        required: false
+        description: Gateway API token
+      CONTRACTS_REPO_TOKEN:
+        required: false
+        description: Contracts repository token
+
+jobs:
+  fail-fast-validation:
+    name: Fail Fast - All Validations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Classification
+        if: ${{ !contains(inputs.skip-validations, 'classification') }}
+        uses: ./.github/workflows-reusable/validate-classification.yml
+        with:
+          service-name: ${{ inputs.service-name }}
+          backstage-url: ${{ inputs.backstage-url }}
+          required-tag: estruturante
+        secrets:
+          BACKSTAGE_API_TOKEN: ${{ secrets.BACKSTAGE_API_TOKEN }}
+
+      - name: Validate Scaffolder Tag
+        if: ${{ !contains(inputs.skip-validations, 'scaffolder-tag') }}
+        uses: ./.github/workflows-reusable/validate-scaffolder-tag.yml
+        with:
+          required-tag: created-via-scaffolder
+          tag-location: both
+        secrets:
+          BACKSTAGE_API_TOKEN: ${{ secrets.BACKSTAGE_API_TOKEN }}
+
+      - name: Validate Template Fingerprint
+        if: ${{ !contains(inputs.skip-validations, 'fingerprint') && inputs.approved-fingerprint != '' }}
+        uses: ./.github/workflows-reusable/validate-template-fingerprint.yml
+        with:
+          approved-fingerprint: ${{ inputs.approved-fingerprint }}
+
+      - name: Validate Owner
+        if: ${{ !contains(inputs.skip-validations, 'owner') }}
+        uses: ./.github/workflows-reusable/validate-owner.yml
+        with:
+          service-name: ${{ inputs.service-name }}
+          backstage-url: ${{ inputs.backstage-url }}
+          deployment-path: ${{ inputs.deployment-path }}
+          validate-deployment: true
+        secrets:
+          BACKSTAGE_API_TOKEN: ${{ secrets.BACKSTAGE_API_TOKEN }}
+
+      - name: Validate Metadata
+        if: ${{ !contains(inputs.skip-validations, 'metadata') }}
+        uses: ./.github/workflows-reusable/validate-metadata.yml
+        with:
+          service-name: ${{ inputs.service-name }}
+          backstage-url: ${{ inputs.backstage-url }}
+        secrets:
+          BACKSTAGE_API_TOKEN: ${{ secrets.BACKSTAGE_API_TOKEN }}
+
+      - name: Validate Contract Exists
+        if: ${{ !contains(inputs.skip-validations, 'contract-exists') && inputs.contracts-repo-url != '' }}
+        uses: ./.github/workflows-reusable/validate-contract-exists.yml
+        with:
+          service-name: ${{ inputs.service-name }}
+          contracts-repo-url: ${{ inputs.contracts-repo-url }}
+          fail-if-missing: true
+        secrets:
+          CONTRACTS_REPO_TOKEN: ${{ secrets.CONTRACTS_REPO_TOKEN }}
+
+      - name: Validate Contract in Gateway
+        if: ${{ !contains(inputs.skip-validations, 'contract-gateway') && inputs.gateway-url != '' }}
+        uses: ./.github/workflows-reusable/validate-contract-gateway.yml
+        with:
+          service-name: ${{ inputs.service-name }}
+          gateway-url: ${{ inputs.gateway-url }}
+          gateway-type: ${{ inputs.gateway-type }}
+          fail-if-missing: true
+        secrets:
+          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
+
+      - name: Validate Observability
+        if: ${{ !contains(inputs.skip-validations, 'observability') }}
+        uses: ./.github/workflows-reusable/validate-observability.yml
+        with:
+          deployment-path: ${{ inputs.deployment-path }}
+          validate-dynatrace: true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Fail Fast Validation Summary"
+          echo ""
+          echo "All governance validations have been executed."
+          echo ""
+          echo "If any validation failed, the build has been stopped to prevent"
+          echo "deployment of non-compliant components."
+          echo ""
+          echo "✅ All validations passed - component is compliant"
+

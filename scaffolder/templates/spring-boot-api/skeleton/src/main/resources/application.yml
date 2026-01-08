@@ -1,0 +1,71 @@
+spring:
+  application:
+    name: ${{ parameters.componentName }}
+
+# Observability
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      default:
+        registerHealthIndicator: true
+        slidingWindowSize: 100
+        minimumNumberOfCalls: 10
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+  ratelimiter:
+    instances:
+      default:
+        limitForPeriod: 10
+        limitRefreshPeriod: 1s
+        timeoutDuration: 5s
+  retry:
+    instances:
+      default:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+
+# Dynatrace Configuration
+dynatrace:
+  oneagent:
+    enabled: ${DYNATRACE_ONEAGENT_ENABLED:true}
+    server: ${DYNATRACE_SERVER:}
+    tenant: ${DYNATRACE_TENANT:}
+
+# Component Metadata
+component:
+  name: ${{ parameters.componentName }}
+  type: ${{ parameters.componentType }}
+  domain: ${{ parameters.domain }}
+  lifecycle: ${{ parameters.lifecycle }}
+  criticality: ${{ parameters.criticality }}
+  owner: ${{ parameters.owner }}
+
+logging:
+  level:
+    root: INFO
+    com.codingbetter: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+

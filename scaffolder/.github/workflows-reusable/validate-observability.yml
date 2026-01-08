@@ -1,0 +1,210 @@
+name: Validate Observability (POL-11)
+
+on:
+  workflow_call:
+    inputs:
+      deployment-path:
+        required: false
+        type: string
+        description: Path to deployment.yaml file
+        default: k8s/deployment.yaml
+      required-annotations:
+        required: false
+        type: string
+        description: Comma-separated list of required annotations
+        default: "backstage.io/owner,backstage.io/lifecycle,governance.criticality,governance.domain,governance.type"
+      required-labels:
+        required: false
+        type: string
+        description: Comma-separated list of required labels
+        default: "app,component,domain,lifecycle,criticality"
+      validate-dynatrace:
+        required: false
+        type: boolean
+        description: Validate Dynatrace OneAgent configuration
+        default: true
+
+jobs:
+  validate-observability:
+    name: Validate Observability Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          if ! command -v yq &> /dev/null; then
+            echo "Installing yq..."
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          yq --version
+
+      - name: Validate Deployment File Exists
+        id: check-deployment
+        run: |
+          DEPLOYMENT_PATH="${{ inputs.deployment-path }}"
+          
+          if [ ! -f "$DEPLOYMENT_PATH" ]; then
+            echo "ERROR: Deployment file not found: $DEPLOYMENT_PATH"
+            echo "All components must have a deployment configuration with observability"
+            exit 1
+          fi
+          
+          echo "✓ Deployment file found: $DEPLOYMENT_PATH"
+          echo "DEPLOYMENT_EXISTS=true" >> $GITHUB_OUTPUT
+
+      - name: Validate Dynatrace OneAgent
+        if: inputs.validate-dynatrace == true && steps.check-deployment.outputs.DEPLOYMENT_EXISTS == 'true'
+        id: validate-dynatrace
+        run: |
+          DEPLOYMENT_PATH="${{ inputs.deployment-path }}"
+          
+          echo "Validating Dynatrace OneAgent configuration..."
+          
+          # Check for initContainer with Dynatrace OneAgent
+          INIT_CONTAINERS=$(yq eval '.spec.template.spec.initContainers[]?.name // empty' "$DEPLOYMENT_PATH" || echo "")
+          
+          if echo "$INIT_CONTAINERS" | grep -qi "dynatrace\|oneagent"; then
+            echo "✓ Dynatrace OneAgent initContainer found"
+            
+            # Check for OneAgent image
+            ONEAGENT_IMAGE=$(yq eval '.spec.template.spec.initContainers[]? | select(.name | test("(?i)dynatrace|oneagent")) | .image // empty' "$DEPLOYMENT_PATH" || echo "")
+            
+            if [ -n "$ONEAGENT_IMAGE" ]; then
+              echo "  Image: $ONEAGENT_IMAGE"
+            fi
+            
+            # Check for environment variables
+            DT_TENANT=$(yq eval '.spec.template.spec.initContainers[]? | select(.name | test("(?i)dynatrace|oneagent")) | .env[]? | select(.name == "DT_TENANT") | .valueFrom.secretKeyRef.name // empty' "$DEPLOYMENT_PATH" || echo "")
+            
+            if [ -n "$DT_TENANT" ]; then
+              echo "  Tenant secret configured"
+            fi
+            
+            echo "DYNATRACE_CONFIGURED=true" >> $GITHUB_OUTPUT
+          else
+            echo "ERROR: Dynatrace OneAgent initContainer not found in deployment"
+            echo ""
+            echo "All components must have Dynatrace OneAgent configured for observability."
+            echo "Add an initContainer with Dynatrace OneAgent image and required environment variables."
+            exit 1
+          fi
+          
+          # Check for volume mount
+          VOLUME_MOUNTS=$(yq eval '.spec.template.spec.volumes[]?.name // empty' "$DEPLOYMENT_PATH" || echo "")
+          if echo "$VOLUME_MOUNTS" | grep -qi "oneagent\|dynatrace"; then
+            echo "✓ Dynatrace volume configured"
+          else
+            echo "WARNING: Dynatrace volume not found (may be using emptyDir)"
+          fi
+
+      - name: Validate Required Annotations
+        if: steps.check-deployment.outputs.DEPLOYMENT_EXISTS == 'true'
+        id: validate-annotations
+        run: |
+          DEPLOYMENT_PATH="${{ inputs.deployment-path }}"
+          
+          echo "Validating required annotations..."
+          
+          IFS=',' read -ra REQUIRED_ANNOTATIONS <<< "${{ inputs.required-annotations }}"
+          
+          MISSING_ANNOTATIONS=()
+          VALIDATED_ANNOTATIONS=()
+          
+          for annotation in "${REQUIRED_ANNOTATIONS[@]}"; do
+            annotation=$(echo "$annotation" | xargs) # trim whitespace
+            
+            VALUE=$(yq eval ".metadata.annotations[\"$annotation\"] // .spec.template.metadata.annotations[\"$annotation\"] // empty" "$DEPLOYMENT_PATH" 2>/dev/null || echo "")
+            
+            if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+              MISSING_ANNOTATIONS+=("$annotation")
+            else
+              VALIDATED_ANNOTATIONS+=("$annotation: $VALUE")
+            fi
+          done
+          
+          if [ ${#VALIDATED_ANNOTATIONS[@]} -gt 0 ]; then
+            echo "✓ Validated annotations:"
+            for ann in "${VALIDATED_ANNOTATIONS[@]}"; do
+              echo "  - $ann"
+            done
+          fi
+          
+          if [ ${#MISSING_ANNOTATIONS[@]} -gt 0 ]; then
+            echo "❌ Missing required annotations:"
+            for ann in "${MISSING_ANNOTATIONS[@]}"; do
+              echo "  - $ann"
+            done
+            echo ""
+            echo "ERROR: Deployment is missing required annotations for observability"
+            exit 1
+          fi
+          
+          echo "ANNOTATIONS_VALID=true" >> $GITHUB_OUTPUT
+
+      - name: Validate Required Labels
+        if: steps.check-deployment.outputs.DEPLOYMENT_EXISTS == 'true'
+        id: validate-labels
+        run: |
+          DEPLOYMENT_PATH="${{ inputs.deployment-path }}"
+          
+          echo "Validating required labels..."
+          
+          IFS=',' read -ra REQUIRED_LABELS <<< "${{ inputs.required-labels }}"
+          
+          MISSING_LABELS=()
+          VALIDATED_LABELS=()
+          
+          for label in "${REQUIRED_LABELS[@]}"; do
+            label=$(echo "$label" | xargs) # trim whitespace
+            
+            VALUE=$(yq eval ".metadata.labels[\"$label\"] // .spec.template.metadata.labels[\"$label\"] // empty" "$DEPLOYMENT_PATH" 2>/dev/null || echo "")
+            
+            if [ -z "$VALUE" ] || [ "$VALUE" = "null" ]; then
+              MISSING_LABELS+=("$label")
+            else
+              VALIDATED_LABELS+=("$label: $VALUE")
+            fi
+          done
+          
+          if [ ${#VALIDATED_LABELS[@]} -gt 0 ]; then
+            echo "✓ Validated labels:"
+            for lbl in "${VALIDATED_LABELS[@]}"; do
+              echo "  - $lbl"
+            done
+          fi
+          
+          if [ ${#MISSING_LABELS[@]} -gt 0 ]; then
+            echo "❌ Missing required labels:"
+            for lbl in "${MISSING_LABELS[@]}"; do
+              echo "  - $lbl"
+            done
+            echo ""
+            echo "ERROR: Deployment is missing required labels for observability"
+            exit 1
+          fi
+          
+          echo "LABELS_VALID=true" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Observability Validation Summary"
+          echo ""
+          if [ "${{ steps.check-deployment.outputs.DEPLOYMENT_EXISTS }}" = "true" ]; then
+            echo "✅ Deployment file found"
+          fi
+          if [ "${{ steps.validate-dynatrace.outputs.DYNATRACE_CONFIGURED }}" = "true" ]; then
+            echo "✅ Dynatrace OneAgent configured"
+          fi
+          if [ "${{ steps.validate-annotations.outputs.ANNOTATIONS_VALID }}" = "true" ]; then
+            echo "✅ Required annotations present"
+          fi
+          if [ "${{ steps.validate-labels.outputs.LABELS_VALID }}" = "true" ]; then
+            echo "✅ Required labels present"
+          fi
+          echo ""
+          echo "Component has proper observability configuration"
+

@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+  title: ${{ parameters.componentName | title }} API
+  description: ${{ parameters.description }}
+  version: 1.0.0
+  contact:
+    name: ${{ parameters.owner }}
+  tags:
+    - name: ${{ parameters.componentName }}
+      description: ${{ parameters.componentName | title }} operations
+servers:
+  - url: https://api.example.com/${{ parameters.componentName }}
+    description: Production server
+  - url: https://api-staging.example.com/${{ parameters.componentName }}
+    description: Staging server
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the service
+      operationId: healthCheck
+      tags:
+        - ${{ parameters.componentName }}
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: DOWN
+  /api/v1/${{ parameters.componentName }}:
+    get:
+      summary: List ${{ parameters.componentName }}
+      description: Returns a list of ${{ parameters.componentName }}
+      operationId: list${{ parameters.componentName | title }}
+      tags:
+        - ${{ parameters.componentName }}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+    post:
+      summary: Create ${{ parameters.componentName }}
+      description: Creates a new ${{ parameters.componentName }}
+      operationId: create${{ parameters.componentName | title }}
+      tags:
+        - ${{ parameters.componentName }}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created successfully
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://login.microsoftonline.com/tenant/oauth2/v2.0/token
+          scopes: {}
+security:
+  - oauth2: []
+

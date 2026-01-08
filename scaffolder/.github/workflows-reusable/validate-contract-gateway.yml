@@ -1,0 +1,177 @@
+name: Validate Contract Gateway (POL-07)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        required: true
+        type: string
+        description: Name of the service/component
+      gateway-url:
+        required: true
+        type: string
+        description: Gateway API URL
+      gateway-type:
+        required: false
+        type: string
+        description: Gateway type (axway|apim)
+        default: axway
+      api-version:
+        required: false
+        type: string
+        description: API version to check
+        default: "1.0.0"
+      fail-if-missing:
+        required: false
+        type: boolean
+        description: Fail workflow if contract is not published
+        default: true
+    secrets:
+      GATEWAY_TOKEN:
+        required: true
+        description: Gateway API token
+
+jobs:
+  validate-gateway:
+    name: Validate Contract in Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Contract in Axway Gateway
+        if: inputs.gateway-type == 'axway' || inputs.gateway-type == ''
+        id: validate-axway
+        run: |
+          SERVICE_NAME="${{ inputs.service-name }}"
+          GATEWAY_URL="${{ inputs.gateway-url }}"
+          GATEWAY_TOKEN="${{ secrets.GATEWAY_TOKEN }}"
+          
+          echo "Validating contract in Axway Gateway for: $SERVICE_NAME"
+          
+          # Query Axway Gateway API
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $GATEWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$GATEWAY_URL/api/apis?name=$SERVICE_NAME")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to query Axway Gateway API (HTTP $HTTP_CODE)"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+          
+          # Check if API exists
+          API_COUNT=$(echo "$RESPONSE_BODY" | jq -r '.items | length' 2>/dev/null || echo "0")
+          
+          if [ "$API_COUNT" = "0" ] || [ -z "$API_COUNT" ]; then
+            echo "Contract not found in Axway Gateway"
+            
+            if [ "${{ inputs.fail-if-missing }}" = "true" ]; then
+              echo ""
+              echo "ERROR: Contract for service '$SERVICE_NAME' is not published in Axway Gateway"
+              echo ""
+              echo "All components must have their contracts published in the gateway"
+              echo "to ensure proper API governance and access control."
+              exit 1
+            else
+              echo "WARNING: Contract not found, but fail-if-missing is false"
+              echo "PUBLISHED=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Get API details
+            API_ID=$(echo "$RESPONSE_BODY" | jq -r '.items[0].id' 2>/dev/null || echo "")
+            API_VERSION=$(echo "$RESPONSE_BODY" | jq -r '.items[0].version // empty' 2>/dev/null || echo "")
+            
+            echo "✓ Contract found in Axway Gateway"
+            echo "  API ID: $API_ID"
+            echo "  Version: $API_VERSION"
+            
+            # Check if version matches
+            if [ -n "$API_VERSION" ] && [ "$API_VERSION" != "${{ inputs.api-version }}" ]; then
+              echo "WARNING: Gateway version ($API_VERSION) does not match expected (${{ inputs.api-version }})"
+            fi
+            
+            echo "PUBLISHED=true" >> $GITHUB_OUTPUT
+            echo "API_ID=$API_ID" >> $GITHUB_OUTPUT
+            echo "API_VERSION=$API_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate Contract in APIM Azure
+        if: inputs.gateway-type == 'apim'
+        id: validate-apim
+        run: |
+          SERVICE_NAME="${{ inputs.service-name }}"
+          GATEWAY_URL="${{ inputs.gateway-url }}"
+          GATEWAY_TOKEN="${{ secrets.GATEWAY_TOKEN }}"
+          
+          echo "Validating contract in APIM Azure for: $SERVICE_NAME"
+          
+          # Query APIM Azure API
+          # APIM Azure uses different endpoint structure
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $GATEWAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$GATEWAY_URL/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.ApiManagement/service/{service-name}/apis?api-version=2021-08-01")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to query APIM Azure API (HTTP $HTTP_CODE)"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+          
+          # Check if API exists (APIM Azure response format)
+          API_EXISTS=$(echo "$RESPONSE_BODY" | jq -r ".value[] | select(.name == \"$SERVICE_NAME\") | .name" 2>/dev/null || echo "")
+          
+          if [ -z "$API_EXISTS" ]; then
+            echo "Contract not found in APIM Azure"
+            
+            if [ "${{ inputs.fail-if-missing }}" = "true" ]; then
+              echo ""
+              echo "ERROR: Contract for service '$SERVICE_NAME' is not published in APIM Azure"
+              echo ""
+              echo "All components must have their contracts published in the gateway"
+              echo "to ensure proper API governance and access control."
+              exit 1
+            else
+              echo "WARNING: Contract not found, but fail-if-missing is false"
+              echo "PUBLISHED=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "✓ Contract found in APIM Azure"
+            echo "  API Name: $API_EXISTS"
+            echo "PUBLISHED=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Gateway Contract Validation Summary"
+          echo ""
+          if [ "${{ inputs.gateway-type }}" = "apim" ]; then
+            if [ "${{ steps.validate-apim.outputs.PUBLISHED }}" = "true" ]; then
+              echo "✅ Contract published in APIM Azure"
+            else
+              if [ "${{ inputs.fail-if-missing }}" = "true" ]; then
+                echo "❌ Contract validation failed"
+              else
+                echo "⚠️  Contract not found (non-blocking)"
+              fi
+            fi
+          else
+            if [ "${{ steps.validate-axway.outputs.PUBLISHED }}" = "true" ]; then
+              echo "✅ Contract published in Axway Gateway"
+              echo "   API ID: ${{ steps.validate-axway.outputs.API_ID }}"
+              echo "   Version: ${{ steps.validate-axway.outputs.API_VERSION }}"
+            else
+              if [ "${{ inputs.fail-if-missing }}" = "true" ]; then
+                echo "❌ Contract validation failed"
+              else
+                echo "⚠️  Contract not found (non-blocking)"
+              fi
+            fi
+          fi
+
